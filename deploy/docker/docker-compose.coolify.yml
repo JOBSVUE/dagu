@@ -153,7 +153,6 @@ services:
       - SERVICE_URL_GRAFANA_3000
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_SERVER_ROOT_URL=$SERVICE_URL_GRAFANA_3000
     depends_on:
       - prometheus
     volumes:
