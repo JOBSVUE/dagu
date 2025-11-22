@@ -38,7 +38,7 @@ services:
       - ./prometheus.yaml:/etc/prometheus/prometheus.yml:ro
     depends_on:
       - otel-collector
-      - dagu-server
+      - daguserver
     networks: [dagu-net]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/ready || exit 1"]
@@ -92,7 +92,7 @@ services:
       start_period: 10s
 
   # Dagu web UI / API server
-  dagu-server:
+  daguserver:
     image: ghcr.io/dagu-org/dagu:latest
     command: ["dagu", "server"]
     environment:
