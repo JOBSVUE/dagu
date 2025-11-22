@@ -1,118 +1,178 @@
-version: '3.9'
+# Dagu + OTEL + Prometheus + Grafana for Coolify (all UIs via Coolify proxy)
+version: "3.9"
+
 services:
+  # OpenTelemetry stack for tracing
   jaeger:
-    image: 'jaegertracing/all-in-one:latest'
-    networks:
-      - dagu-net
-    ports:
-      - '16686:16686'
-      - '14250:14250'
+    image: jaegertracing/all-in-one:latest
+    networks: [dagu-net]
+    # Coolify magic URL for Jaeger UI (16686 inside container)
+    environment:
+      - SERVICE_URL_JAEGER_16686
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:16686 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
   otel-collector:
-    image: 'otel/opentelemetry-collector:latest'
-    command:
-      - '--config=/etc/otel-collector.yaml'
+    image: otel/opentelemetry-collector:latest
+    command: ["--config=/etc/otel-collector.yaml"]
     volumes:
-      - './otel-collector.yaml:/etc/otel-collector.yaml:ro'
-    ports:
-      - '4317:4317'
-      - '4318:4318'
-    depends_on:
-      - jaeger
-    networks:
-      - dagu-net
+      - ./otel-collector.yaml:/etc/otel-collector.yaml:ro
+    # No host ports: other containers can send OTLP to otel-collector:4317/4318
+    networks: [dagu-net]
+    healthcheck:
+      # Adjust path if your config changes it
+      test: ["CMD-SHELL", "curl -fsS http://localhost:4318/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # Prometheus: scrapes metrics from OTel Collector and Dagu server
   prometheus:
-    image: 'prom/prometheus:latest'
+    image: prom/prometheus:latest
     volumes:
-      - './prometheus.yaml:/etc/prometheus/prometheus.yml:ro'
+      - ./prometheus.yaml:/etc/prometheus/prometheus.yml:ro
     depends_on:
       - otel-collector
-      - daguserver
-    networks:
-      - dagu-net
+      - dagu-server
+    networks: [dagu-net]
+    # Expose Prometheus only via Coolify proxy
+    environment:
+      - SERVICE_URL_PROMETHEUS_9090
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  # Dagu control-plane: Coordinator (gRPC) for distributed workers
   dagu-coordinator:
-    image: 'ghcr.io/dagu-org/dagu:latest'
-    command:
-      - dagu
-      - coordinator
+    image: ghcr.io/dagu-org/dagu:latest
+    command: ["dagu", "coordinator"]
     environment:
       - DAGU_PEER_INSECURE=true
       - DAGU_COORDINATOR_HOST=dagu-coordinator
       - DAGU_COORDINATOR_PORT=50055
+    # internal-only, no host port
     volumes:
-      - 'dagu-data:/var/lib/dagu'
-      - './dags:/var/lib/dagu/dags:ro'
-    networks:
-      - dagu-net
+      - dagu-data:/var/lib/dagu
+      - ./dags:/var/lib/dagu/dags:ro
+    networks: [dagu-net]
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 50055 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # Dagu scheduler service (reads DAGs and enqueues runs)
   dagu-scheduler:
-    image: 'ghcr.io/dagu-org/dagu:latest'
-    command:
-      - dagu
-      - scheduler
+    image: ghcr.io/dagu-org/dagu:latest
+    command: ["dagu", "scheduler"]
     environment:
       - DAGU_COORDINATOR_HOST=dagu-coordinator
       - DAGU_COORDINATOR_PORT=50055
       - DAGU_SCHEDULER_PORT=8090
       - DAGU_DAGS_DIR=/var/lib/dagu/dags
-      - DAGU_TZ=UTC
+      # - DAGU_TZ=UTC
     depends_on:
       - dagu-coordinator
+    # internal-only, scheduler health/UI not exposed directly
     volumes:
-      - 'dagu-data:/var/lib/dagu'
-      - './dags:/var/lib/dagu/dags:ro'
-    networks:
-      - dagu-net
-  daguserver:
-    image: 'ghcr.io/dagu-org/dagu:latest'
-    command:
-      - dagu
-      - server
+      - dagu-data:/var/lib/dagu
+      - ./dags:/var/lib/dagu/dags:ro
+    networks: [dagu-net]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8090/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # Dagu web UI / API server
+  dagu-server:
+    image: ghcr.io/dagu-org/dagu:latest
+    command: ["dagu", "server"]
     environment:
-      - SERVICE_FQDN_DAGUSERVER_8380
+      # Coolify URL for Dagu UI (8080 in container)
+      - SERVICE_URL_DAGUSERVER_8080
       - DAGU_COORDINATOR_HOST=dagu-coordinator
       - DAGU_COORDINATOR_PORT=50055
       - DAGU_HOST=0.0.0.0
       - DAGU_PORT=8080
       - DAGU_DAGS_DIR=/var/lib/dagu/dags
+      # - DAGU_BASE_PATH=/dagu
     depends_on:
       - dagu-scheduler
       - dagu-coordinator
+    # internal-only, Coolify proxy hits container:8080
     volumes:
-      - 'dagu-data:/var/lib/dagu'
-      - './dags:/var/lib/dagu/dags:ro'
-    networks:
-      - dagu-net
+      - dagu-data:/var/lib/dagu
+      - ./dags:/var/lib/dagu/dags:ro
+    networks: [dagu-net]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  # Dagu worker (polls coordinator and executes tasks)
   dagu-worker:
-    image: 'ghcr.io/dagu-org/dagu:latest'
-    command:
-      - dagu
-      - worker
+    image: ghcr.io/dagu-org/dagu:latest
+    command: ["dagu", "worker"]
     environment:
       - DAGU_COORDINATOR_HOST=dagu-coordinator
       - DAGU_COORDINATOR_PORT=50055
+      # Optional:
+      # - DAGU_WORKER_MAX_ACTIVE_RUNS=100
+      # - DAGU_WORKER_LABELS=region=us-east-1,instance-type=m5.large
     depends_on:
       - dagu-coordinator
     volumes:
-      - 'dagu-data:/var/lib/dagu'
-      - './dags:/var/lib/dagu/dags:ro'
-    networks:
-      - dagu-net
+      - dagu-data:/var/lib/dagu
+      - ./dags:/var/lib/dagu/dags:ro
+    networks: [dagu-net]
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z dagu-coordinator 50055 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # Grafana: visualize Prometheus metrics
   grafana:
-    image: 'grafana/grafana:latest'
+    image: grafana/grafana:latest
     environment:
+      # Use Coolify proxy for Grafana as well
+      - SERVICE_URL_GRAFANA_3000
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SERVER_ROOT_URL=$SERVICE_URL_GRAFANA_3000
     depends_on:
       - prometheus
     volumes:
-      - 'grafana-data:/var/lib/grafana'
-      - './grafana/provisioning:/etc/grafana/provisioning:ro'
-    networks:
-      - dagu-net
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    networks: [dagu-net]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
 volumes:
   dagu-data:
     driver: local
   grafana-data:
     driver: local
+
 networks:
   dagu-net:
     driver: bridge
