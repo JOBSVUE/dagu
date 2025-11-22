@@ -1,0 +1,118 @@
+version: '3.9'
+services:
+  jaeger:
+    image: 'jaegertracing/all-in-one:latest'
+    networks:
+      - dagu-net
+    ports:
+      - '16686:16686'
+      - '14250:14250'
+  otel-collector:
+    image: 'otel/opentelemetry-collector:latest'
+    command:
+      - '--config=/etc/otel-collector.yaml'
+    volumes:
+      - './otel-collector.yaml:/etc/otel-collector.yaml:ro'
+    ports:
+      - '4317:4317'
+      - '4318:4318'
+    depends_on:
+      - jaeger
+    networks:
+      - dagu-net
+  prometheus:
+    image: 'prom/prometheus:latest'
+    volumes:
+      - './prometheus.yaml:/etc/prometheus/prometheus.yml:ro'
+    depends_on:
+      - otel-collector
+      - daguserver
+    networks:
+      - dagu-net
+  dagu-coordinator:
+    image: 'ghcr.io/dagu-org/dagu:latest'
+    command:
+      - dagu
+      - coordinator
+    environment:
+      - DAGU_PEER_INSECURE=true
+      - DAGU_COORDINATOR_HOST=dagu-coordinator
+      - DAGU_COORDINATOR_PORT=50055
+    volumes:
+      - 'dagu-data:/var/lib/dagu'
+      - './dags:/var/lib/dagu/dags:ro'
+    networks:
+      - dagu-net
+  dagu-scheduler:
+    image: 'ghcr.io/dagu-org/dagu:latest'
+    command:
+      - dagu
+      - scheduler
+    environment:
+      - DAGU_COORDINATOR_HOST=dagu-coordinator
+      - DAGU_COORDINATOR_PORT=50055
+      - DAGU_SCHEDULER_PORT=8090
+      - DAGU_DAGS_DIR=/var/lib/dagu/dags
+      - DAGU_TZ=UTC
+    depends_on:
+      - dagu-coordinator
+    volumes:
+      - 'dagu-data:/var/lib/dagu'
+      - './dags:/var/lib/dagu/dags:ro'
+    networks:
+      - dagu-net
+  daguserver:
+    image: 'ghcr.io/dagu-org/dagu:latest'
+    command:
+      - dagu
+      - server
+    environment:
+      - SERVICE_FQDN_DAGUSERVER_8380
+      - DAGU_COORDINATOR_HOST=dagu-coordinator
+      - DAGU_COORDINATOR_PORT=50055
+      - DAGU_HOST=0.0.0.0
+      - DAGU_PORT=8080
+      - DAGU_DAGS_DIR=/var/lib/dagu/dags
+    depends_on:
+      - dagu-scheduler
+      - dagu-coordinator
+    volumes:
+      - 'dagu-data:/var/lib/dagu'
+      - './dags:/var/lib/dagu/dags:ro'
+    networks:
+      - dagu-net
+  dagu-worker:
+    image: 'ghcr.io/dagu-org/dagu:latest'
+    command:
+      - dagu
+      - worker
+    environment:
+      - DAGU_COORDINATOR_HOST=dagu-coordinator
+      - DAGU_COORDINATOR_PORT=50055
+    depends_on:
+      - dagu-coordinator
+    volumes:
+      - 'dagu-data:/var/lib/dagu'
+      - './dags:/var/lib/dagu/dags:ro'
+    networks:
+      - dagu-net
+  grafana:
+    image: 'grafana/grafana:latest'
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - prometheus
+    volumes:
+      - 'grafana-data:/var/lib/grafana'
+      - './grafana/provisioning:/etc/grafana/provisioning:ro'
+    networks:
+      - dagu-net
+volumes:
+  dagu-data:
+    driver: local
+  grafana-data:
+    driver: local
+networks:
+  dagu-net:
+    driver: bridge
