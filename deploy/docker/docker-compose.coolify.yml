@@ -40,9 +40,6 @@ services:
       - otel-collector
       - dagu-server
     networks: [dagu-net]
-    # Expose Prometheus only via Coolify proxy
-    environment:
-      - SERVICE_URL_PROMETHEUS_9090
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/ready || exit 1"]
       interval: 10s
