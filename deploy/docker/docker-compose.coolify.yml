@@ -103,7 +103,7 @@ services:
       - DAGU_HOST=0.0.0.0
       - DAGU_PORT=8080
       - DAGU_DAGS_DIR=/var/lib/dagu/dags
-      - DAGU_BASE_PATH=/dagu
+      #- DAGU_BASE_PATH=/dagu
     depends_on:
       - dagu-scheduler
       - dagu-coordinator
