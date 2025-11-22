@@ -7,8 +7,8 @@ services:
     image: jaegertracing/all-in-one:latest
     networks: [dagu-net]
     # Coolify magic URL for Jaeger UI (16686 inside container)
-    #environment:
-      #- SERVICE_URL_JAEGER_16686
+    environment:
+      - SERVICE_URL_JAEGER_16686
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:16686 || exit 1"]
       interval: 10s
@@ -97,7 +97,7 @@ services:
     command: ["dagu", "server"]
     environment:
       # Coolify URL for Dagu UI (8080 in container)
-      #- SERVICE_URL_DAGUSERVER_8080
+      - SERVICE_URL_DAGUSERVER_8080
       - DAGU_COORDINATOR_HOST=dagu-coordinator
       - DAGU_COORDINATOR_PORT=50055
       - DAGU_HOST=0.0.0.0
@@ -127,7 +127,7 @@ services:
       - DAGU_COORDINATOR_HOST=dagu-coordinator
       - DAGU_COORDINATOR_PORT=50055
       # Optional:
-      # - DAGU_WORKER_MAX_ACTIVE_RUNS=100
+      - DAGU_WORKER_MAX_ACTIVE_RUNS=100
       # - DAGU_WORKER_LABELS=region=us-east-1,instance-type=m5.large
     depends_on:
       - dagu-coordinator
@@ -147,7 +147,7 @@ services:
     image: grafana/grafana:latest
     environment:
       # Use Coolify proxy for Grafana as well
-      #- SERVICE_URL_GRAFANA_3000
+      - SERVICE_URL_GRAFANA_3000
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
     depends_on:
