@@ -49,6 +49,7 @@ RUN apt-get update && \
     sudo \
     tzdata \
     jq \
+    socat \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -87,6 +88,21 @@ RUN mkdir -p "${DAGU_HOME}" && \
     chown -R "${USER_UID}:${USER_GID}" "${DAGU_HOME}" && \
     chmod 755 "${DAGU_HOME}"
 
+
+RUN <<'EOF'
+set -eux
+cat >/usr/local/bin/start-with-forwarder.sh <<'SH'
+#!/usr/bin/env bash
+set -eu
+# Start socat forwarder: external 8822 -> internal 8080
+socat TCP-LISTEN:8822,fork,reuseaddr TCP:127.0.0.1:8080 &
+# Execute the original entrypoint with all arguments
+exec /entrypoint.sh "$@"
+SH
+chmod +x /usr/local/bin/start-with-forwarder.sh
+EOF
+
+
 WORKDIR /home/dagu
 ENV DAGU_HOST=0.0.0.0
 ENV DAGU_PORT=8080
@@ -96,6 +112,7 @@ ENV PUID=${USER_UID}
 ENV PGID=${USER_GID}
 ENV DOCKER_GID=-1
 ENV DEBIAN_FRONTEND=noninteractive
-EXPOSE 8080
-ENTRYPOINT ["/entrypoint.sh"]
+EXPOSE 8822
+ENTRYPOINT ["/usr/local/bin/start-with-forwarder.sh"]
+
 CMD ["dagu", "start-all"]
